@@ -715,7 +715,7 @@ def main():
                 pass
     
     print("=" * 60)
-    print("团子素材解析工具 - 精简版 (仅图片)")
+    print("zyf图片去水印")
     print("=" * 60)
     print(f"服务地址: http://127.0.0.1:{port}")
     print(f"静态目录: {STATIC_DIR}")

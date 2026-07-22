@@ -220,9 +220,14 @@ flowchart TD
 
 ## 运行方式
 
+### 本地运行
+
 ```bash
 # 进入项目目录
 cd D:\python\internal-demo
+
+# 安装依赖
+pip install -r requirements.txt
 
 # 启动服务器（默认端口8081）
 python main.py
@@ -232,6 +237,48 @@ python main.py --port 8081
 ```
 
 启动后访问: http://127.0.0.1:8081
+
+### 免费部署
+
+#### 1. Render（推荐）
+
+**步骤:**
+1. 访问 [Render.com](https://render.com/) 并注册账号
+2. 点击 **New > Web Service**
+3. 选择你的 GitHub 仓库
+4. 配置选项:
+   - **Build Command**: `pip install -r requirements.txt`
+   - **Start Command**: `python main.py --port $PORT`
+   - **Python Version**: 3.11
+5. 点击 **Create Web Service**
+
+#### 2. Railway
+
+**步骤:**
+1. 访问 [Railway.app](https://railway.app/) 并注册账号
+2. 点击 **New Project > GitHub Repo**
+3. 选择你的 GitHub 仓库
+4. 配置选项:
+   - **Start Command**: `python main.py --port $PORT`
+5. 点击 **Deploy**
+
+#### 3. PythonAnywhere
+
+**步骤:**
+1. 访问 [PythonAnywhere.com](https://www.pythonanywhere.com/) 并注册账号（免费账号）
+2. 在 **Files** 页面上传项目文件
+3. 在 **Web** 页面点击 **Add a new web app**
+4. 选择 **Flask** → **Python 3.11**
+5. 修改 **wsgi.py** 文件，指向你的应用
+6. 重启 web app
+
+#### 4. Fly.io
+
+**步骤:**
+1. 安装 flyctl: `curl -L https://fly.io/install.sh | sh`
+2. 登录: `fly auth login`
+3. 初始化项目: `fly launch`
+4. 部署: `fly deploy`
 
 ## 技术栈
 
