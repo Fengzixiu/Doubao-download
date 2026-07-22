@@ -1,20 +1,55 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-from flask import Flask, request, jsonify, send_from_directory, redirect, url_for
+import os
 import urllib.request
 import urllib.parse
 import json
 import re
 import traceback
+import logging
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from decode_worker import decode_main_url
-
-app = Flask(__name__, static_folder='app/static', template_folder='app/templates')
+from flask import Flask, request, jsonify, send_from_directory, make_response
+from flask_cors import CORS
 
 PROJECT_ROOT = Path(__file__).parent
 STATIC_DIR = PROJECT_ROOT / "app" / "static"
+
+app = Flask(__name__, static_folder='app/static')
+CORS(app)
+
+
+def setup_logging():
+    log_dir = PROJECT_ROOT / 'logs'
+    log_dir.mkdir(exist_ok=True)
+    
+    log_file = log_dir / 'app.log'
+    
+    handler = RotatingFileHandler(
+        str(log_file),
+        maxBytes=10 * 1024 * 1024,
+        backupCount=5,
+        encoding='utf-8'
+    )
+    
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    handler.setFormatter(formatter)
+    
+    app.logger.addHandler(handler)
+    app.logger.setLevel(logging.DEBUG)
+    
+    logger = logging.getLogger('doubao_parser')
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+    
+    return logger
+
+logger = setup_logging()
+
 
 DOUBAO_DOMAINS = [
     "doubao.com",
@@ -76,7 +111,7 @@ def fetch_doubao_page(url):
             
             return content.decode("utf-8", errors="ignore")
     except Exception as e:
-        print(f"获取页面失败: {e}")
+        logger.error(f"获取页面失败: {e}")
         return ""
 
 
@@ -138,7 +173,7 @@ def extract_images_from_json(data):
                             images.append({"url": img_url})
     
     except Exception as e:
-        print(f"提取图片失败: {e}")
+        logger.error(f"提取图片失败: {e}")
     
     return images
 
@@ -163,7 +198,7 @@ def parse_doubao_page(page_html, url):
                     results["images"] = images
                     return results
             except Exception as e:
-                print(f"解析JSON失败: {e}")
+                logger.error(f"解析JSON失败: {e}")
         
         data_fn_args_pattern = r'data-fn-args="([^"]+)"'
         data_fn_args_matches = re.findall(data_fn_args_pattern, page_html)
@@ -178,7 +213,7 @@ def parse_doubao_page(page_html, url):
                         inner_data = args_data[2]
                         images = extract_images_from_json(inner_data)
                         if images:
-                            print(f"从 data-fn-args 结构2提取到 {len(images)} 个图片")
+                            logger.info(f"从 data-fn-args 结构2提取到 {len(images)} 个图片")
                             results["images"] = images
                             return results
                     
@@ -195,7 +230,7 @@ def parse_doubao_page(page_html, url):
                                                     inner_data = json.loads(arg)
                                                     images = extract_images_from_json(inner_data)
                                                     if images:
-                                                        print(f"从 data-fn-args 结构1提取到 {len(images)} 个图片")
+                                                        logger.info(f"从 data-fn-args 结构1提取到 {len(images)} 个图片")
                                                         results["images"] = images
                                                         return results
                                                 except json.JSONDecodeError:
@@ -213,11 +248,11 @@ def parse_doubao_page(page_html, url):
                                                                 seen_urls.add(img_url)
                                                                 images.append({"url": img_url})
                                                     if images:
-                                                        print(f"从 data-fn-args 提取到 {len(images)} 个图片")
+                                                        logger.info(f"从 data-fn-args 提取到 {len(images)} 个图片")
                                                         results["images"] = images
                                                         return results
             except Exception as e:
-                print(f"方法4错误: {e}")
+                logger.error(f"方法4错误: {e}")
                 pass
         
         snapshot_match = re.search(r'"message_snapshot"\s*:\s*({[^}]*"message_list"\s*:\s*\[.*?\]})', page_html, re.DOTALL)
@@ -229,30 +264,51 @@ def parse_doubao_page(page_html, url):
                     results["images"] = images
                     return results
             except Exception as e:
-                print(f"解析 message_snapshot 失败: {e}")
+                logger.error(f"解析 message_snapshot 失败: {e}")
     
     except Exception as e:
-        print(f"解析页面失败: {e}")
+        logger.error(f"解析页面失败: {e}")
     
     return results
 
 
 def decode_media_url(encoded_url, key_seed=""):
     try:
-        return decode_main_url(encoded_url, key_seed)
+        try:
+            from decode_worker import decode_main_url
+            return decode_main_url(encoded_url, key_seed)
+        except ImportError as e:
+            logger.warning(f"解码模块导入失败，直接返回原始URL: {e}")
+            return encoded_url
     except Exception as e:
-        print(f"解码URL失败: {e}")
+        logger.error(f"解码URL失败: {e}")
         return encoded_url
 
 
 @app.route('/')
 def index():
-    return send_from_directory(STATIC_DIR, 'index.html')
+    try:
+        if (STATIC_DIR / 'index.html').exists():
+            return send_from_directory(STATIC_DIR, 'index.html')
+        else:
+            logger.error("index.html 文件不存在")
+            return jsonify({"detail": "首页文件不存在"}), 500
+    except Exception as e:
+        logger.error(f"加载首页失败: {e}", exc_info=True)
+        return jsonify({"detail": "服务器内部错误"}), 500
 
 
 @app.route('/static/<path:filename>')
 def static_files(filename):
-    return send_from_directory(STATIC_DIR, filename)
+    try:
+        if (STATIC_DIR / filename).exists():
+            return send_from_directory(STATIC_DIR, filename)
+        else:
+            logger.error(f"静态文件不存在: {filename}")
+            return jsonify({"detail": "文件不存在"}), 404
+    except Exception as e:
+        logger.error(f"加载静态文件失败: {e}", exc_info=True)
+        return jsonify({"detail": "服务器内部错误"}), 500
 
 
 @app.route('/api/parse', methods=['POST'])
@@ -261,14 +317,14 @@ def api_parse():
         payload = request.get_json()
         text = payload.get("text", "")
         
-        print(f"解析请求: {text[:100]}...")
+        logger.info(f"解析请求: {text[:100]}...")
         
         url = extract_url(text)
         if not url:
             return jsonify({"detail": "未找到有效的链接"}), 400
         
         link_type = detect_link_type(url)
-        print(f"链接类型: {link_type}, URL: {url}")
+        logger.info(f"链接类型: {link_type}, URL: {url}")
         
         if link_type["type"] == "unsupported":
             return jsonify({"detail": "暂不支持该链接类型"}), 400
@@ -276,6 +332,7 @@ def api_parse():
         page_html = fetch_doubao_page(url)
         
         if not page_html:
+            logger.warning(f"获取页面失败，使用原始URL: {url}")
             return jsonify({
                 "type": "image",
                 "images": [{"url": url}]
@@ -298,11 +355,11 @@ def api_parse():
         if not result["images"]:
             result = {"type": "image", "images": [{"url": url}]}
         
+        logger.info(f"解析成功，提取到 {len(result['images'])} 张图片")
         return jsonify(result)
         
     except Exception as e:
-        print(f"解析错误: {e}")
-        traceback.print_exc()
+        logger.error(f"解析错误: {e}", exc_info=True)
         return jsonify({"detail": str(e)}), 500
 
 
@@ -314,7 +371,7 @@ def _fetch_with_retry(target_url, headers, max_retries=3):
                 return resp
         except urllib.error.HTTPError as e:
             if e.code == 403 and attempt < max_retries - 1:
-                print(f"403错误，第 {attempt + 1} 次重试...")
+                logger.warning(f"403错误，第 {attempt + 1} 次重试...")
                 import time
                 time.sleep(0.5)
                 continue
@@ -369,7 +426,7 @@ def api_media():
         target_url = urllib.parse.unquote(target_url)
         target_url = target_url.replace("&amp;", "&")
         
-        print(f"媒体代理: {target_url[:150]}...")
+        logger.info(f"媒体代理: {target_url[:150]}...")
         
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -400,12 +457,12 @@ def api_media():
         for i, url in enumerate(urls_to_try):
             try:
                 if i > 0:
-                    print(f"尝试第 {i + 1} 种URL格式: {url[:100]}...")
+                    logger.info(f"尝试第 {i + 1} 种URL格式: {url[:100]}...")
                 resp = _fetch_with_retry(url, headers)
                 break
             except Exception as e:
                 last_error = e
-                print(f"尝试失败: {e}")
+                logger.warning(f"尝试失败: {e}")
                 continue
         
         if resp is None:
@@ -414,14 +471,12 @@ def api_media():
         content_type = resp.headers.get("Content-Type", "application/octet-stream")
         content = resp.read()
         
-        from flask import make_response
         response = make_response(content)
         response.headers.set('Content-Type', content_type)
-        response.headers.set('Access-Control-Allow-Origin', '*')
         return response
             
     except Exception as e:
-        print(f"媒体代理错误: {e}")
+        logger.error(f"媒体代理错误: {e}", exc_info=True)
         return jsonify({"detail": str(e)}), 500
 
 
@@ -454,19 +509,16 @@ def api_download():
             content_type = resp.headers.get("Content-Type", "application/octet-stream")
             content = resp.read()
             
-            from flask import make_response
             response = make_response(content)
             response.headers.set('Content-Type', content_type)
             response.headers.set('Content-Disposition', f'attachment; filename*=UTF-8''{urllib.parse.quote(filename)}')
-            response.headers.set('Access-Control-Allow-Origin', '*')
             return response
                 
     except Exception as e:
-        print(f"下载错误: {e}")
+        logger.error(f"下载错误: {e}", exc_info=True)
         return jsonify({"detail": str(e)}), 500
 
 
 if __name__ == '__main__':
-    import os
     port = int(os.environ.get('PORT', 8081))
     app.run(host='0.0.0.0', port=port, debug=False)
